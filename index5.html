@@ -1,0 +1,286 @@
+<style>
+/* ==========================================
+   MOBILE VERSION (9x16, 1080×1920 design)
+   FULL-VIEWPORT PNG SEQUENCE + SCROLL-SNAP
+   + Transparent clickable hotspots
+   + Custom cursor (debug/optional)
+   ========================================== */
+
+html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+
+/* Scroll container with snap slides */
+.rm-pager {
+  height: 100vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scroll-snap-type: y mandatory;
+  scroll-behavior: smooth;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+}
+@supports (height: 100svh) { .rm-pager { height: 100svh; } }
+
+.rm-pager > .rm-slide {
+  height: 100vh;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font: 600 32px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  text-shadow: 0 2px 10px rgba(0,0,0,0.35);
+}
+@supports (height: 100svh) { .rm-pager > .rm-slide { height: 100svh; } }
+
+/* Placeholder slide colors */
+.rm-slide:nth-child(1) { background:#1abc9c; }
+.rm-slide:nth-child(2) { background:#e74c3c; }
+.rm-slide:nth-child(3) { background:#3498db; }
+.rm-slide:nth-child(4) { background:#9b59b6; }
+.rm-slide:nth-child(5) { background:#f39c12; }
+.rm-slide:nth-child(6) { background:#2ecc71; }
+.rm-slide:nth-child(7) { background:#34495e; }
+
+/* Full-viewport sequence canvas */
+.sequence-full {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  background: transparent;
+}
+.sequence-full canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: transparent;
+}
+
+/* Hotspot layer locked to 1080×1920 */
+.hotspot-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  pointer-events: none;
+}
+.hotspot-inner {
+  position: absolute;
+  width: 1080px;
+  height: 1920px;
+  transform-origin: 0 0;
+  transform:
+    translate(var(--seqX, 0px), var(--seqY, 0px))
+    scale(var(--seqS, 1));
+}
+
+/* Transparent clickable squares — exact size (121×121) */
+.hotspot {
+  position: absolute;
+  width: 121px;
+  height: 121px;
+  pointer-events: auto;
+  cursor: none;
+  background: transparent;
+  border: none;
+}
+
+/* Exact positions (x=480px, y list from reference) */
+.hs-1 { left:480px; top:490px; }
+.hs-2 { left:480px; top:627px; }
+.hs-3 { left:480px; top:764px; }
+.hs-4 { left:480px; top:904px; }
+.hs-5 { left:480px; top:1041px; }
+.hs-6 { left:480px; top:1178px; }
+.hs-7 { left:480px; top:1314px; }
+
+/* ===== Custom Cursor (optional for mobile debug) ===== */
+body { cursor: none; }
+.custom-cursor {
+  position: fixed;
+  top: 0; left: 0;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: white;
+  pointer-events: none;
+  z-index: 10002;
+  transform: translate(-50%, -50%);
+  transition: background 0.2s ease, transform 0.15s ease;
+}
+.custom-cursor.over-hotspot {
+  background: black;
+  transform: translate(-50%, -50%) scale(1.2);
+}
+</style>
+
+<!-- ===== Slides ===== -->
+<div class="rm-pager" id="pager">
+  <div class="rm-slide">Slide 1</div>
+  <div class="rm-slide">Slide 2</div>
+  <div class="rm-slide">Slide 3</div>
+  <div class="rm-slide">Slide 4</div>
+  <div class="rm-slide">Slide 5</div>
+  <div class="rm-slide">Slide 6</div>
+  <div class="rm-slide">Slide 7</div>
+</div>
+
+<!-- PNG Sequence -->
+<div class="sequence-full" aria-hidden="true">
+  <canvas id="seqCanvas"></canvas>
+</div>
+
+<!-- Hotspots -->
+<div class="hotspot-layer">
+  <div class="hotspot-inner" id="hotspotInner">
+    <button class="hotspot hs-1" data-slide="0"></button>
+    <button class="hotspot hs-2" data-slide="1"></button>
+    <button class="hotspot hs-3" data-slide="2"></button>
+    <button class="hotspot hs-4" data-slide="3"></button>
+    <button class="hotspot hs-5" data-slide="4"></button>
+    <button class="hotspot hs-6" data-slide="5"></button>
+    <button class="hotspot hs-7" data-slide="6"></button>
+  </div>
+</div>
+
+<!-- Cursor (optional for desktop debugging) -->
+<div class="custom-cursor" id="customCursor"></div>
+
+<script>
+/*
+ * MOBILE VERSION SETTINGS
+ * 181 frames (0–180)
+ * 30 frames per scroll section (7 slides)
+ * PNG base: https://raw.githubusercontent.com/kmarcarroll/104mobile/refs/heads/main/bar_full_mobile_00000.png
+ */
+(function() {
+  const DESIGN_W = 1080, DESIGN_H = 1920;
+  const pager = document.getElementById('pager');
+  const canvas = document.getElementById('seqCanvas');
+  const ctx = canvas.getContext('2d', { alpha: true });
+  const hsInner = document.getElementById('hotspotInner');
+  const cursor = document.getElementById('customCursor');
+  const DPR = Math.min(2, window.devicePixelRatio || 1);
+
+  const TOTAL_FRAMES = 181;
+  const FRAMES_PER_SNAP = 30;
+  const PAD = 5, EXT = '.png';
+  const BASE = 'https://raw.githubusercontent.com/kmarcarroll/104mobile/refs/heads/main/bar_full_mobile_';
+  function frameSrc(i){ return `${BASE}${String(i).padStart(PAD,'0')}${EXT}`; }
+
+  const slides = Array.from(pager.querySelectorAll('.rm-slide'));
+  const TRANSITIONS = slides.length - 1;
+
+  function snapProgress() {
+    const vh = pager.clientHeight;
+    const top = pager.scrollTop;
+    const i = Math.floor(top / vh);
+    const start = i * vh;
+    const t = Math.min(1, Math.max(0, (top - start) / vh));
+    return { i, t };
+  }
+  function frameIndexFromScroll() {
+    const { i, t } = snapProgress();
+    if (i >= TRANSITIONS) return TOTAL_FRAMES - 1;
+    const base = i * FRAMES_PER_SNAP;
+    const local = Math.floor(t * FRAMES_PER_SNAP);
+    return Math.min(TOTAL_FRAMES - 1, base + local);
+  }
+
+  function resizeCanvas() {
+    const rect = canvas.getBoundingClientRect();
+    const w = Math.floor(rect.width * DPR);
+    const h = Math.floor(rect.height * DPR);
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w; canvas.height = h;
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+    }
+  }
+
+  function updateHotspotTransform() {
+    const cw = canvas.clientWidth, ch = canvas.clientHeight;
+    const s = Math.max(cw / DESIGN_W, ch / DESIGN_H);
+    const x = (cw - DESIGN_W * s) / 2;
+    const y = (ch - DESIGN_H * s) / 2;
+    hsInner.style.setProperty('--seqS', s);
+    hsInner.style.setProperty('--seqX', x + 'px');
+    hsInner.style.setProperty('--seqY', y + 'px');
+  }
+
+  const cache = new Map();
+  function ensure(i) {
+    if (i < 0 || i >= TOTAL_FRAMES || cache.has(i)) return;
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.src = frameSrc(i);
+    cache.set(i, img);
+  }
+
+  function draw(idx) {
+    const img = cache.get(idx);
+    if (!img || !img.complete) return false;
+    const cw = canvas.clientWidth, ch = canvas.clientHeight;
+    const iw = img.naturalWidth || DESIGN_W, ih = img.naturalHeight || DESIGN_H;
+    const s = Math.max(cw / iw, ch / ih);
+    const w = iw * s, h = ih * s;
+    const x = (cw - w) / 2, y = (ch - h) / 2;
+    ctx.clearRect(0, 0, cw, ch);
+    ctx.drawImage(img, x, y, w, h);
+    updateHotspotTransform();
+    return true;
+  }
+
+  let rafPending = false;
+  function update() {
+    rafPending = false;
+    const idx = frameIndexFromScroll();
+    ensure(idx); ensure(idx-1); ensure(idx+1);
+    draw(idx);
+  }
+
+  pager.addEventListener('scroll', () => {
+    if (!rafPending) { rafPending = true; requestAnimationFrame(update); }
+  }, { passive:true });
+  window.addEventListener('resize', () => {
+    resizeCanvas(); updateHotspotTransform(); requestAnimationFrame(update);
+  });
+
+  /* Scroll to slide on hotspot click */
+  document.querySelectorAll('.hotspot').forEach(hs=>{
+    hs.addEventListener('click', e=>{
+      const i = parseInt(hs.dataset.slide,10)||0;
+      pager.scrollTo({ top: i * pager.clientHeight, behavior: 'smooth' });
+    });
+  });
+
+  /* Custom cursor (optional for debug) */
+  document.addEventListener('mousemove', e=>{
+    cursor.style.top=e.clientY+'px';
+    cursor.style.left=e.clientX+'px';
+  });
+  document.querySelectorAll('.hotspot').forEach(hs=>{
+    hs.addEventListener('mouseenter',()=>cursor.classList.add('over-hotspot'));
+    hs.addEventListener('mouseleave',()=>cursor.classList.remove('over-hotspot'));
+  });
+
+  /* ===== INIT WITH PRELOAD FIX ===== */
+  function init() {
+    resizeCanvas();
+    updateHotspotTransform();
+
+    // Explicitly preload and draw first frame immediately
+    const first = new Image();
+    first.crossOrigin = 'anonymous';
+    first.src = frameSrc(0);
+    first.onload = () => {
+      cache.set(0, first);
+      draw(0);
+    };
+
+    // Warm a few more
+    for (let i = 1; i < 5; i++) ensure(i);
+    requestAnimationFrame(update);
+  }
+
+  init();
+})();
+</script>
